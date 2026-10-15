@@ -15,11 +15,8 @@
 
 <link rel="stylesheet" href="/style.css" />
 
-<!-- Iconify (Lucide SVG icons) -->
+<!-- Iconify (Lucide SVG) -->
 <script src="https://code.iconify.design/iconify-icon/2.1.0/iconify-icon.min.js"></script>
-
-<!-- Sucrase (TS → JS in browser) -->
-<script src="https://unpkg.com/sucrase@3.35.0/dist/index.umd.js"></script>
 
 <!-- CodeMirror 6 -->
 <script type="module">
@@ -41,11 +38,10 @@
 </header>
 
 <main id="app">
-  <!-- Начальный fallback, пока JS грузится -->
   <section class="masthead">
     <div class="masthead-meta">
       <span class="dot"></span>
-      <span>Registry · v2.0 · 2026</span>
+      <span>Registry · v2.1 · 2026</span>
     </div>
     <h1 class="masthead-title">
       Plugins for <em>Visual Merge</em>.
@@ -67,12 +63,10 @@
   </section>
 </main>
 
-<!-- Модальное окно (скрыто по умолчанию) -->
 <div class="modal-overlay" id="modal-overlay" style="display:none;">
   <div class="modal" id="modal"></div>
 </div>
 
-<!-- Стек тостов -->
 <div class="toast-stack" id="toast-stack"></div>
 
 <script src="/script.js"></script>
