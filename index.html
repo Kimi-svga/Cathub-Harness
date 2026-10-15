@@ -1,59 +1,80 @@
 <!DOCTYPE html>
 <html lang="ru" data-theme="dark">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <meta name="theme-color" content="#0a0a0a" />
-  <title>CATSHUB — Plugin Registry</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="theme-color" content="#0a0a0a" />
+<title>CATSHUB — Plugin Registry</title>
 
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;500;600;700;800&family=Onest:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
-    rel="stylesheet"
-  />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;500;600;700;800&family=Onest:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
+  rel="stylesheet"
+/>
 
-  <link rel="stylesheet" href="/style.css" />
+<link rel="stylesheet" href="/style.css" />
 
-  <!-- Iconify — SVG-иконки Lucide, без эмодзи -->
-  <script src="https://code.iconify.design/iconify-icon/2.1.0/iconify-icon.min.js"></script>
+<!-- Iconify (Lucide SVG icons) -->
+<script src="https://code.iconify.design/iconify-icon/2.1.0/iconify-icon.min.js"></script>
 
-  <!-- Sucrase — компиляция TS → JS в браузере -->
-  <script src="https://unpkg.com/sucrase@3.35.0/dist/index.umd.js"></script>
+<!-- Sucrase (TS → JS in browser) -->
+<script src="https://unpkg.com/sucrase@3.35.0/dist/index.umd.js"></script>
 
-  <!-- CodeMirror 6 — редактор кода -->
-  <script type="module">
-    import { EditorView, basicSetup } from "https://esm.sh/codemirror@6.0.1";
-    import { javascript } from "https://esm.sh/@codemirror/lang-javascript@6.2.2";
-    import { oneDark } from "https://esm.sh/@codemirror/theme-one-dark@6.1.2";
-    window.CM = { EditorView, basicSetup, javascript, oneDark };
-    window.dispatchEvent(new Event('cm-ready'));
-  </script>
+<!-- CodeMirror 6 -->
+<script type="module">
+  import { EditorView, basicSetup } from "https://esm.sh/codemirror@6.0.1";
+  import { javascript } from "https://esm.sh/@codemirror/lang-javascript@6.2.2";
+  import { oneDark } from "https://esm.sh/@codemirror/theme-one-dark@6.1.2";
+  window.CM = { EditorView, basicSetup, javascript, oneDark };
+  window.dispatchEvent(new Event("cm-ready"));
+</script>
 </head>
 <body>
 
-  <!-- HEADER -->
-  <header class="app-header">
-    <a class="brand" href="#/" data-nav>
-      <span class="brand-mark"></span>
-      <span class="brand-text">CATS<em>HUB</em></span>
-    </a>
+<header class="app-header">
+  <a class="brand" href="#/" data-nav>
+    <span class="brand-mark"></span>
+    <span class="brand-text">CATS<em>HUB</em></span>
+  </a>
+  <nav class="header-nav" id="header-nav"></nav>
+</header>
 
-    <nav class="header-nav" id="header-nav"></nav>
-  </header>
+<main id="app">
+  <!-- Начальный fallback, пока JS грузится -->
+  <section class="masthead">
+    <div class="masthead-meta">
+      <span class="dot"></span>
+      <span>Registry · v2.0 · 2026</span>
+    </div>
+    <h1 class="masthead-title">
+      Plugins for <em>Visual Merge</em>.
+    </h1>
+    <p class="masthead-lead">
+      Terminal extensions. Install with one command:
+      <code>cats install &lt;name&gt;</code>
+    </p>
+    <div class="masthead-actions">
+      <a class="btn btn-primary" href="#/register" data-nav>
+        <iconify-icon icon="lucide:user-plus"></iconify-icon>
+        Get started
+      </a>
+      <a class="btn" href="#/docs" data-nav>
+        <iconify-icon icon="lucide:book-open"></iconify-icon>
+        Documentation
+      </a>
+    </div>
+  </section>
+</main>
 
-  <!-- MAIN APP -->
-  <main id="app"></main>
+<!-- Модальное окно (скрыто по умолчанию) -->
+<div class="modal-overlay" id="modal-overlay" style="display:none;">
+  <div class="modal" id="modal"></div>
+</div>
 
-  <!-- MODAL -->
-  <div class="modal-overlay" id="modal-overlay" hidden>
-    <div class="modal" id="modal"></div>
-  </div>
+<!-- Стек тостов -->
+<div class="toast-stack" id="toast-stack"></div>
 
-  <!-- TOAST -->
-  <div class="toast-stack" id="toast-stack"></div>
-
-  <!-- SCRIPTS -->
-  <script src="/script.js"></script>
+<script src="/script.js"></script>
 </body>
   </html> 
