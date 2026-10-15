@@ -1,8 +1,7 @@
-"""CATSHUB Harness v2 — registry + профили + портфолио + компилятор."""
+"""CATSHUB Harness v2.1 — registry плагинов (JS-only)."""
 
 import hashlib
 import re
-import subprocess
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -105,7 +104,6 @@ class Plugin(Base):
     code: Mapped[str] = mapped_column(Text, nullable=False)
     code_size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    code_ts: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     downloads: Mapped[int] = mapped_column(Integer, default=0, nullable=False, index=True)
     rating_sum: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -228,50 +226,6 @@ def calc_hash(text: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════
-# TS → JS COMPILER (esbuild через subprocess)
-# ═══════════════════════════════════════════════════════════════
-
-def compile_ts(code_ts: str) -> str:
-    """Компилирует TypeScript в JavaScript через esbuild (stdin → stdout)."""
-    if not code_ts or not code_ts.strip():
-        raise ValueError("Empty code")
-
-    if len(code_ts) > 100_000:
-        raise ValueError("Code too large (max 100KB)")
-
-    try:
-        result = subprocess.run(
-            [
-                "esbuild",
-                "--loader=ts",
-                "--format=esm",
-                "--target=es2022",
-                "--minify=false",
-                "--legal-comments=none",
-            ],
-            input=code_ts,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except FileNotFoundError:
-        raise RuntimeError("esbuild not found in PATH")
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("Compile timeout")
-
-    if result.returncode != 0:
-        msg = (result.stderr or result.stdout or "compile failed").strip()
-        raise ValueError(msg[:500])
-
-    code_js = result.stdout
-
-    if len(code_js) > 200_000:
-        raise ValueError("Compiled code too large")
-
-    return code_js
-
-
-# ═══════════════════════════════════════════════════════════════
 # DEPS
 # ═══════════════════════════════════════════════════════════════
 
@@ -302,17 +256,6 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    # Проверка esbuild
-    try:
-        test = subprocess.run(
-            ["esbuild", "--version"],
-            capture_output=True, text=True, timeout=5,
-        )
-        print(f"✅ esbuild available: {test.stdout.strip()}")
-    except Exception as e:
-        print(f"⚠️ esbuild not available: {e}")
-
-    # Создаём или обновляем админа
     async with AsyncSessionLocal() as session:
         admin = (await session.execute(
             select(User).where(User.username == settings.ADMIN_USERNAME)
@@ -328,11 +271,11 @@ async def lifespan(app: FastAPI):
                 bio="CATSHUB administrator",
             ))
             await session.commit()
-            print(f"✅ Admin created: {settings.ADMIN_USERNAME}")
+            print(f"Admin created: {settings.ADMIN_USERNAME}")
         elif not verify_password(settings.ADMIN_PASSWORD, admin.password_hash):
             admin.password_hash = hash_password(settings.ADMIN_PASSWORD)
             await session.commit()
-            print("🔐 Admin password updated")
+            print("Admin password updated")
 
     yield
     await engine.dispose()
@@ -342,7 +285,7 @@ async def lifespan(app: FastAPI):
 # APP
 # ═══════════════════════════════════════════════════════════════
 
-app = FastAPI(title="CATSHUB Harness", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="CATSHUB Harness", version="2.1.0", lifespan=lifespan)
 
 cors_origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
 app.add_middleware(
@@ -394,12 +337,8 @@ class PublishRequest(BaseModel):
     version: str = Field(min_length=1, max_length=16)
     category: str = "utils"
     icon: str = "lucide:package"
-    code_ts: str = Field(min_length=10)
+    code_js: str = Field(min_length=10)
     manifest: dict
-
-
-class PreviewRequest(BaseModel):
-    code_ts: str = Field(min_length=1)
 
 
 class VerifyRequest(BaseModel):
@@ -411,7 +350,7 @@ class RoleRequest(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════════
-# AUTH
+# HELPERS
 # ═══════════════════════════════════════════════════════════════
 
 def _user_dict(u: User) -> dict:
@@ -430,6 +369,43 @@ def _user_dict(u: User) -> dict:
         "created_at": u.created_at.isoformat() if u.created_at else None,
     }
 
+
+def _plugin_brief(p: Plugin, author_username: str) -> dict:
+    return {
+        "id": p.id,
+        "name": p.name,
+        "description": p.description,
+        "category": p.category,
+        "icon": p.icon,
+        "version": p.version,
+        "author": author_username,
+        "downloads": p.downloads,
+        "rating": round(p.rating_sum / p.rating_count, 2) if p.rating_count else 0.0,
+        "rating_count": p.rating_count,
+        "verified": p.is_verified,
+        "created_at": p.created_at.isoformat() if p.created_at else None,
+    }
+
+
+def _portfolio_dict(p: Portfolio) -> dict:
+    return {
+        "id": p.id,
+        "user_id": p.user_id,
+        "title": p.title,
+        "description": p.description,
+        "url": p.url,
+        "repo_url": p.repo_url,
+        "image_url": p.image_url,
+        "tags": p.tags or [],
+        "is_featured": p.is_featured,
+        "sort_order": p.sort_order,
+        "created_at": p.created_at.isoformat() if p.created_at else None,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# AUTH
+# ═══════════════════════════════════════════════════════════════
 
 @app.post("/api/auth/register")
 async def register(payload: RegisterRequest):
@@ -579,22 +555,6 @@ async def get_user_portfolio(username: str):
 # PORTFOLIO
 # ═══════════════════════════════════════════════════════════════
 
-def _portfolio_dict(p: Portfolio) -> dict:
-    return {
-        "id": p.id,
-        "user_id": p.user_id,
-        "title": p.title,
-        "description": p.description,
-        "url": p.url,
-        "repo_url": p.repo_url,
-        "image_url": p.image_url,
-        "tags": p.tags or [],
-        "is_featured": p.is_featured,
-        "sort_order": p.sort_order,
-        "created_at": p.created_at.isoformat() if p.created_at else None,
-    }
-
-
 @app.post("/api/portfolio")
 async def create_portfolio(payload: PortfolioCreate, user: User = Depends(get_current_user)):
     async with AsyncSessionLocal() as session:
@@ -647,23 +607,6 @@ async def delete_portfolio(item_id: int, user: User = Depends(get_current_user))
 # ═══════════════════════════════════════════════════════════════
 # PLUGINS
 # ═══════════════════════════════════════════════════════════════
-
-def _plugin_brief(p: Plugin, author_username: str) -> dict:
-    return {
-        "id": p.id,
-        "name": p.name,
-        "description": p.description,
-        "category": p.category,
-        "icon": p.icon,
-        "version": p.version,
-        "author": author_username,
-        "downloads": p.downloads,
-        "rating": round(p.rating_sum / p.rating_count, 2) if p.rating_count else 0.0,
-        "rating_count": p.rating_count,
-        "verified": p.is_verified,
-        "created_at": p.created_at.isoformat() if p.created_at else None,
-    }
-
 
 @app.get("/api/plugins")
 async def list_plugins(
@@ -725,7 +668,7 @@ async def get_plugin(name: str):
         "manifest": p.manifest,
         "code_hash": p.code_hash,
         "code_size": p.code_size,
-        "code_ts": p.code_ts,
+        "code": p.code,
         "author_info": {
             "username": author.username,
             "display_name": author.display_name,
@@ -760,19 +703,6 @@ async def get_plugin_code(name: str):
     )
 
 
-@app.post("/api/plugins/preview")
-async def preview_plugin(payload: PreviewRequest, user: User = Depends(get_current_user)):
-    """Компилирует TS → JS без сохранения. Для Preview."""
-    try:
-        code_js = compile_ts(payload.code_ts)
-    except ValueError as e:
-        raise HTTPException(400, f"Compile error: {e}")
-    except RuntimeError as e:
-        raise HTTPException(500, f"Compiler error: {e}")
-
-    return {"code_js": code_js}
-
-
 @app.post("/api/plugins/publish")
 async def publish_plugin(payload: PublishRequest, user: User = Depends(get_current_user)):
     name = payload.name.lower().strip()
@@ -781,13 +711,9 @@ async def publish_plugin(payload: PublishRequest, user: User = Depends(get_curre
     if not VERSION_RE.match(payload.version):
         raise HTTPException(400, "Version must be X.Y.Z")
 
-    # ─── Компиляция TS → JS ───
-    try:
-        code_js = compile_ts(payload.code_ts)
-    except ValueError as e:
-        raise HTTPException(400, f"Compile error: {e}")
-    except RuntimeError as e:
-        raise HTTPException(500, f"Compiler error: {e}")
+    code_js = payload.code_js
+    if len(code_js) > 200_000:
+        raise HTTPException(400, "Code too large (max 200KB)")
 
     code_hash = calc_hash(code_js)
     code_size = len(code_js)
@@ -809,7 +735,6 @@ async def publish_plugin(payload: PublishRequest, user: User = Depends(get_curre
                 code=code_js,
                 code_size=code_size,
                 code_hash=code_hash,
-                code_ts=payload.code_ts,
                 is_verified=False,
                 is_active=True,
             )
@@ -825,7 +750,6 @@ async def publish_plugin(payload: PublishRequest, user: User = Depends(get_curre
             existing.code = code_js
             existing.code_size = code_size
             existing.code_hash = code_hash
-            existing.code_ts = payload.code_ts
             existing.is_verified = False
             existing.updated_at = datetime.utcnow()
 
@@ -952,12 +876,12 @@ async def health():
     return {
         "status": "ok",
         "service": "catshub-harness",
-        "version": "2.0.0",
+        "version": "2.1.0",
     }
 
 
 # ═══════════════════════════════════════════════════════════════
-# FRONTEND (static)
+# FRONTEND
 # ═══════════════════════════════════════════════════════════════
 
 BASE_DIR = Path(__file__).parent
@@ -980,7 +904,6 @@ async def serve_js():
 
 @app.get("/{path:path}")
 async def spa_fallback(path: str):
-    """SPA fallback — любой URL отдаёт index.html."""
     if path.startswith(("api/", "health", "docs", "openapi")):
         raise HTTPException(404)
     return FileResponse(BASE_DIR / "index.html")
