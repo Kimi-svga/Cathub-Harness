@@ -1,12 +1,13 @@
-"""CATSHUB Harness v2 — registry + профили + портфолио."""
+"""CATSHUB Harness v2 — registry + профили + портфолио + компилятор."""
 
 import hashlib
 import re
+import subprocess
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from jose import JWTError, jwt
@@ -48,7 +49,10 @@ settings = Settings()
 # ═══════════════════════════════════════════════════════════════
 
 engine = create_async_engine(
-    settings.DATABASE_URL, echo=False, pool_size=5, max_overflow=10,
+    settings.DATABASE_URL,
+    echo=False,
+    pool_size=5,
+    max_overflow=10,
 )
 AsyncSessionLocal = async_sessionmaker(
     engine, class_=AsyncSession, expire_on_commit=False,
@@ -68,7 +72,6 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(16), default="author", nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
-    # Профиль
     display_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     bio: Mapped[str | None] = mapped_column(String(512), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -225,6 +228,50 @@ def calc_hash(text: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════
+# TS → JS COMPILER (esbuild через subprocess)
+# ═══════════════════════════════════════════════════════════════
+
+def compile_ts(code_ts: str) -> str:
+    """Компилирует TypeScript в JavaScript через esbuild (stdin → stdout)."""
+    if not code_ts or not code_ts.strip():
+        raise ValueError("Empty code")
+
+    if len(code_ts) > 100_000:
+        raise ValueError("Code too large (max 100KB)")
+
+    try:
+        result = subprocess.run(
+            [
+                "esbuild",
+                "--loader=ts",
+                "--format=esm",
+                "--target=es2022",
+                "--minify=false",
+                "--legal-comments=none",
+            ],
+            input=code_ts,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except FileNotFoundError:
+        raise RuntimeError("esbuild not found in PATH")
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("Compile timeout")
+
+    if result.returncode != 0:
+        msg = (result.stderr or result.stdout or "compile failed").strip()
+        raise ValueError(msg[:500])
+
+    code_js = result.stdout
+
+    if len(code_js) > 200_000:
+        raise ValueError("Compiled code too large")
+
+    return code_js
+
+
+# ═══════════════════════════════════════════════════════════════
 # DEPS
 # ═══════════════════════════════════════════════════════════════
 
@@ -255,6 +302,17 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+    # Проверка esbuild
+    try:
+        test = subprocess.run(
+            ["esbuild", "--version"],
+            capture_output=True, text=True, timeout=5,
+        )
+        print(f"✅ esbuild available: {test.stdout.strip()}")
+    except Exception as e:
+        print(f"⚠️ esbuild not available: {e}")
+
+    # Создаём или обновляем админа
     async with AsyncSessionLocal() as session:
         admin = (await session.execute(
             select(User).where(User.username == settings.ADMIN_USERNAME)
@@ -336,9 +394,12 @@ class PublishRequest(BaseModel):
     version: str = Field(min_length=1, max_length=16)
     category: str = "utils"
     icon: str = "lucide:package"
-    code_js: str = Field(min_length=10)
-    code_ts: str | None = None
+    code_ts: str = Field(min_length=10)
     manifest: dict
+
+
+class PreviewRequest(BaseModel):
+    code_ts: str = Field(min_length=1)
 
 
 class VerifyRequest(BaseModel):
@@ -352,6 +413,23 @@ class RoleRequest(BaseModel):
 # ═══════════════════════════════════════════════════════════════
 # AUTH
 # ═══════════════════════════════════════════════════════════════
+
+def _user_dict(u: User) -> dict:
+    return {
+        "id": u.id,
+        "username": u.username,
+        "role": u.role,
+        "is_verified": u.is_verified,
+        "display_name": u.display_name,
+        "bio": u.bio,
+        "avatar_url": u.avatar_url,
+        "website": u.website,
+        "location": u.location,
+        "github": u.github,
+        "twitter": u.twitter,
+        "created_at": u.created_at.isoformat() if u.created_at else None,
+    }
+
 
 @app.post("/api/auth/register")
 async def register(payload: RegisterRequest):
@@ -409,28 +487,8 @@ async def me(user: User = Depends(get_current_user)):
     return _user_dict(user)
 
 
-def _user_dict(u: User) -> dict:
-    return {
-        "id": u.id,
-        "username": u.username,
-        "role": u.role,
-        "is_verified": u.is_verified,
-        "display_name": u.display_name,
-        "bio": u.bio,
-        "avatar_url": u.avatar_url,
-        "website": u.website,
-        "location": u.location,
-        "github": u.github,
-        "twitter": u.twitter,
-        "created_at": u.created_at.isoformat() if u.created_at else None,
-    }
-
-
 @app.put("/api/me")
-async def update_me(
-    payload: ProfileUpdate,
-    user: User = Depends(get_current_user),
-):
+async def update_me(payload: ProfileUpdate, user: User = Depends(get_current_user)):
     async with AsyncSessionLocal() as session:
         db_user = await session.get(User, user.id)
         for field, value in payload.dict(exclude_unset=True).items():
@@ -518,14 +576,27 @@ async def get_user_portfolio(username: str):
 
 
 # ═══════════════════════════════════════════════════════════════
-# PORTFOLIO (свой)
+# PORTFOLIO
 # ═══════════════════════════════════════════════════════════════
 
+def _portfolio_dict(p: Portfolio) -> dict:
+    return {
+        "id": p.id,
+        "user_id": p.user_id,
+        "title": p.title,
+        "description": p.description,
+        "url": p.url,
+        "repo_url": p.repo_url,
+        "image_url": p.image_url,
+        "tags": p.tags or [],
+        "is_featured": p.is_featured,
+        "sort_order": p.sort_order,
+        "created_at": p.created_at.isoformat() if p.created_at else None,
+    }
+
+
 @app.post("/api/portfolio")
-async def create_portfolio(
-    payload: PortfolioCreate,
-    user: User = Depends(get_current_user),
-):
+async def create_portfolio(payload: PortfolioCreate, user: User = Depends(get_current_user)):
     async with AsyncSessionLocal() as session:
         item = Portfolio(
             user_id=user.id,
@@ -544,11 +615,7 @@ async def create_portfolio(
 
 
 @app.put("/api/portfolio/{item_id}")
-async def update_portfolio(
-    item_id: int,
-    payload: PortfolioCreate,
-    user: User = Depends(get_current_user),
-):
+async def update_portfolio(item_id: int, payload: PortfolioCreate, user: User = Depends(get_current_user)):
     async with AsyncSessionLocal() as session:
         item = await session.get(Portfolio, item_id)
         if item is None:
@@ -565,10 +632,7 @@ async def update_portfolio(
 
 
 @app.delete("/api/portfolio/{item_id}")
-async def delete_portfolio(
-    item_id: int,
-    user: User = Depends(get_current_user),
-):
+async def delete_portfolio(item_id: int, user: User = Depends(get_current_user)):
     async with AsyncSessionLocal() as session:
         item = await session.get(Portfolio, item_id)
         if item is None:
@@ -578,22 +642,6 @@ async def delete_portfolio(
         await session.delete(item)
         await session.commit()
     return {"ok": True}
-
-
-def _portfolio_dict(p: Portfolio) -> dict:
-    return {
-        "id": p.id,
-        "user_id": p.user_id,
-        "title": p.title,
-        "description": p.description,
-        "url": p.url,
-        "repo_url": p.repo_url,
-        "image_url": p.image_url,
-        "tags": p.tags or [],
-        "is_featured": p.is_featured,
-        "sort_order": p.sort_order,
-        "created_at": p.created_at.isoformat() if p.created_at else None,
-    }
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -712,21 +760,37 @@ async def get_plugin_code(name: str):
     )
 
 
+@app.post("/api/plugins/preview")
+async def preview_plugin(payload: PreviewRequest, user: User = Depends(get_current_user)):
+    """Компилирует TS → JS без сохранения. Для Preview."""
+    try:
+        code_js = compile_ts(payload.code_ts)
+    except ValueError as e:
+        raise HTTPException(400, f"Compile error: {e}")
+    except RuntimeError as e:
+        raise HTTPException(500, f"Compiler error: {e}")
+
+    return {"code_js": code_js}
+
+
 @app.post("/api/plugins/publish")
-async def publish_plugin(
-    payload: PublishRequest,
-    user: User = Depends(get_current_user),
-):
+async def publish_plugin(payload: PublishRequest, user: User = Depends(get_current_user)):
     name = payload.name.lower().strip()
     if not PLUGIN_NAME_RE.match(name):
         raise HTTPException(400, "Invalid plugin name")
     if not VERSION_RE.match(payload.version):
         raise HTTPException(400, "Version must be X.Y.Z")
-    if len(payload.code_js) > 200_000:
-        raise HTTPException(400, "Code too large (max 200KB)")
 
-    code_hash = calc_hash(payload.code_js)
-    code_size = len(payload.code_js)
+    # ─── Компиляция TS → JS ───
+    try:
+        code_js = compile_ts(payload.code_ts)
+    except ValueError as e:
+        raise HTTPException(400, f"Compile error: {e}")
+    except RuntimeError as e:
+        raise HTTPException(500, f"Compiler error: {e}")
+
+    code_hash = calc_hash(code_js)
+    code_size = len(code_js)
 
     async with AsyncSessionLocal() as session:
         existing = (await session.execute(
@@ -742,7 +806,7 @@ async def publish_plugin(
                 icon=payload.icon,
                 version=payload.version,
                 manifest=payload.manifest,
-                code=payload.code_js,
+                code=code_js,
                 code_size=code_size,
                 code_hash=code_hash,
                 code_ts=payload.code_ts,
@@ -758,7 +822,7 @@ async def publish_plugin(
             existing.icon = payload.icon
             existing.version = payload.version
             existing.manifest = payload.manifest
-            existing.code = payload.code_js
+            existing.code = code_js
             existing.code_size = code_size
             existing.code_hash = code_hash
             existing.code_ts = payload.code_ts
@@ -767,7 +831,13 @@ async def publish_plugin(
 
         await session.commit()
 
-    return {"ok": True, "name": name, "version": payload.version, "code_hash": code_hash}
+    return {
+        "ok": True,
+        "name": name,
+        "version": payload.version,
+        "code_hash": code_hash,
+        "size": code_size,
+    }
 
 
 @app.delete("/api/plugins/{name}")
@@ -790,9 +860,7 @@ async def delete_plugin(name: str, user: User = Depends(get_current_user)):
 # ═══════════════════════════════════════════════════════════════
 
 @app.post("/api/admin/plugins/{name}/verify")
-async def verify_plugin(
-    name: str, payload: VerifyRequest, admin: User = Depends(get_admin_user),
-):
+async def verify_plugin(name: str, payload: VerifyRequest, admin: User = Depends(get_admin_user)):
     async with AsyncSessionLocal() as session:
         plugin = (await session.execute(
             select(Plugin).where(Plugin.name == name)
@@ -814,9 +882,7 @@ async def list_users(admin: User = Depends(get_admin_user), limit: int = 200):
 
 
 @app.post("/api/admin/users/{user_id}/role")
-async def set_role(
-    user_id: int, payload: RoleRequest, admin: User = Depends(get_admin_user),
-):
+async def set_role(user_id: int, payload: RoleRequest, admin: User = Depends(get_admin_user)):
     if payload.role not in ("author", "admin"):
         raise HTTPException(400, "Invalid role")
     async with AsyncSessionLocal() as session:
@@ -851,14 +917,22 @@ async def stats():
         plugins_count = (await session.execute(
             select(func.count(Plugin.id)).where(Plugin.is_active == True)
         )).scalar() or 0
-        users_count = (await session.execute(select(func.count(User.id)))).scalar() or 0
+
+        users_count = (await session.execute(
+            select(func.count(User.id))
+        )).scalar() or 0
+
         downloads = (await session.execute(
             select(func.sum(Plugin.downloads)).where(Plugin.is_active == True)
         )).scalar() or 0
+
         avg_rating = (await session.execute(
             select(func.avg(PluginRating.rating))
         )).scalar()
-        portfolio_count = (await session.execute(select(func.count(Portfolio.id)))).scalar() or 0
+
+        portfolio_count = (await session.execute(
+            select(func.count(Portfolio.id))
+        )).scalar() or 0
 
     return {
         "plugins": plugins_count,
@@ -869,13 +943,21 @@ async def stats():
     }
 
 
+# ═══════════════════════════════════════════════════════════════
+# HEALTH
+# ═══════════════════════════════════════════════════════════════
+
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "catshub-harness", "version": "2.0.0"}
+    return {
+        "status": "ok",
+        "service": "catshub-harness",
+        "version": "2.0.0",
+    }
 
 
 # ═══════════════════════════════════════════════════════════════
-# FRONTEND
+# FRONTEND (static)
 # ═══════════════════════════════════════════════════════════════
 
 BASE_DIR = Path(__file__).parent
@@ -898,11 +980,13 @@ async def serve_js():
 
 @app.get("/{path:path}")
 async def spa_fallback(path: str):
-    # Не перехватываем /api и статику
-    if path.startswith(("api/", "health")):
+    """SPA fallback — любой URL отдаёт index.html."""
+    if path.startswith(("api/", "health", "docs", "openapi")):
         raise HTTPException(404)
     return FileResponse(BASE_DIR / "index.html")
 
+
+# ═══════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     import uvicorn
