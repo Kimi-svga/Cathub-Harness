@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <title>CATSHUB — Plugin Registry</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;500;600;700;800&family=Onest:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
+    rel="stylesheet"
+  />
+
+  <link rel="stylesheet" href="/style.css" />
+
+  <!-- Iconify — SVG-иконки Lucide, без эмодзи -->
+  <script src="https://code.iconify.design/iconify-icon/2.1.0/iconify-icon.min.js"></script>
+
+  <!-- Sucrase — компиляция TS → JS в браузере -->
+  <script src="https://unpkg.com/sucrase@3.35.0/dist/index.umd.js"></script>
+
+  <!-- CodeMirror 6 — редактор кода -->
+  <script type="module">
+    import { EditorView, basicSetup } from "https://esm.sh/codemirror@6.0.1";
+    import { javascript } from "https://esm.sh/@codemirror/lang-javascript@6.2.2";
+    import { oneDark } from "https://esm.sh/@codemirror/theme-one-dark@6.1.2";
+    window.CM = { EditorView, basicSetup, javascript, oneDark };
+    window.dispatchEvent(new Event('cm-ready'));
+  </script>
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header class="app-header">
+    <a class="brand" href="#/" data-nav>
+      <span class="brand-mark"></span>
+      <span class="brand-text">CATS<em>HUB</em></span>
+    </a>
+
+    <nav class="header-nav" id="header-nav"></nav>
+  </header>
+
+  <!-- MAIN APP -->
+  <main id="app"></main>
+
+  <!-- MODAL -->
+  <div class="modal-overlay" id="modal-overlay" hidden>
+    <div class="modal" id="modal"></div>
+  </div>
+
+  <!-- TOAST -->
+  <div class="toast-stack" id="toast-stack"></div>
+
+  <!-- SCRIPTS -->
+  <script src="/script.js"></script>
+</body>
+  </html> 
